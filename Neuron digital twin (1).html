@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Neuron digital twin</title>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500&family=Instrument+Sans:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+--bg:#efe9f7;--panel:#f8f4fc;--ink:#271f45;--mute:#6a6088;--line:#d8cfe8;--dend:#8d6db4;--axon:#5f86b8;--exc:#e0407c;--inh:#0f8fc9;--spk:#e08a00;--soma:#7e5aa8}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1b1632;--panel:#241d42;--ink:#ece6f7;--mute:#a79fc4;--line:#382f5e;--dend:#8f6fb5;--axon:#6a93c6;--exc:#ff8fbf;--inh:#6fd3ff;--spk:#ffd36b;--soma:#b093d6}}
+:root[data-theme="dark"]{--bg:#1b1632;--panel:#241d42;--ink:#ece6f7;--mute:#a79fc4;--line:#382f5e;--dend:#8f6fb5;--axon:#6a93c6;--exc:#ff8fbf;--inh:#6fd3ff;--spk:#ffd36b;--soma:#b093d6}
+*,*::before,*::after{box-sizing:inherit}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font:15px/1.45 "Instrument Sans",system-ui,sans-serif}
+main{display:grid;grid-template-columns:1fr 360px;height:100%}
+.stage{position:relative;min-height:0;overflow:hidden}
+#gl{position:absolute;inset:0;width:100%;height:100%;cursor:grab;touch-action:pan-y}
+header{position:absolute;left:28px;top:24px;max-width:380px;pointer-events:none}
+h1{font:500 34px/1.1 Newsreader,Georgia,serif;margin:0 0 8px;letter-spacing:-.01em}
+header p{margin:0;color:var(--mute)}
+.key{position:absolute;left:28px;bottom:22px;display:flex;flex-wrap:wrap;gap:6px 18px;color:var(--mute);font-size:13px;pointer-events:none}
+.key i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
+aside{background:var(--panel);border-left:1px solid var(--line);padding:24px;overflow:auto}
+h2{font:500 21px Newsreader,Georgia,serif;margin:0 0 6px}
+.blk{margin-bottom:28px}
+label{display:flex;justify-content:space-between;margin-top:12px}
+output{font-variant-numeric:tabular-nums;color:var(--mute)}
+input[type=range]{width:100%;margin:4px 0 0;accent-color:var(--exc)}
+button{font:inherit;margin-top:16px;padding:8px 14px;border-radius:8px;border:1px solid var(--ink);background:transparent;color:var(--ink);cursor:pointer}
+button:hover{background:var(--ink);color:var(--panel)}
+:focus-visible{outline:2px solid var(--exc);outline-offset:2px}
+.big{font:500 58px/1 Newsreader,Georgia,serif;font-variant-numeric:tabular-nums;margin:10px 0 2px}
+.big small{font:400 16px "Instrument Sans",system-ui,sans-serif;color:var(--mute);margin-left:6px}
+dl{margin:12px 0 0;display:grid;grid-template-columns:1fr auto;gap:6px 12px}
+dt{color:var(--mute)}dd{margin:0;font-variant-numeric:tabular-nums;font-weight:600}
+.note{color:var(--mute);font-size:13px;margin:10px 0 0}
+#trace{width:100%;height:110px;display:block;margin-top:8px}
+@media (max-width:820px){
+ html,body{height:auto}
+ main{grid-template-columns:1fr;grid-template-rows:58vh auto;height:auto}
+ aside{border-left:0;border-top:1px solid var(--line)}
+ header{left:16px;top:14px}h1{font-size:26px}header p{display:none}.key{left:16px;bottom:12px}
+}
+</style>
+</head>
+<body>
+<main>
+ <section class="stage" id="stage">
+  <canvas id="gl" aria-label="3D neuron. Drag to rotate."></canvas>
+  <header><h1>Neuron digital twin</h1>
+   <p>A procedurally grown neuron, a live integrate-and-fire simulation running on it, and a small neural network that predicts how fast it will fire. Drag to rotate.</p></header>
+  <div class="key"><span><i style="background:var(--exc)"></i>Excitatory input</span><span><i style="background:var(--inh)"></i>Inhibitory input</span><span><i style="background:var(--spk)"></i>Spike</span></div>
+ </section>
+ <aside>
+  <div class="blk">
+   <h2>Synaptic input</h2>
+   <label for="nE">Excitatory synapses <output id="oE"></output></label>
+   <input id="nE" type="range" min="0" max="80" value="55">
+   <label for="nI">Inhibitory synapses <output id="oI"></output></label>
+   <input id="nI" type="range" min="0" max="40" value="8">
+   <label for="rate">Input rate per synapse <output id="oR"></output></label>
+   <input id="rate" type="range" min="1" max="50" value="26">
+   <button id="volley" type="button">Send volley</button>
+  </div>
+  <div class="blk">
+   <h2>Model prediction</h2>
+   <div class="big"><span id="pred">–</span><small>spikes per second</small></div>
+   <dl>
+    <dt>Simulated, last second</dt><dd><span id="meas">–</span> Hz</dd>
+    <dt>Spike chance, next 100 ms</dt><dd id="prob">–</dd>
+   </dl>
+   <p class="note" id="status">Training the prediction model on simulated runs…</p>
+  </div>
+  <div class="blk">
+   <h2>Membrane potential</h2>
+   <canvas id="trace" aria-label="Membrane potential over the last 400 milliseconds"></canvas>
+   <p class="note">Last 400 ms. The dashed line is the firing threshold at −50 mV.</p>
+  </div>
+ </aside>
+</main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(()=>{
+const T=THREE,$=id=>document.getElementById(id);
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+function mulberry(a){return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+const R=mulberry(11);
+
+/* ---------- theme ---------- */
+let C={};
+function theme(){const g=n=>new T.Color(css(n));C={dend:g('--dend'),axon:g('--axon'),exc:g('--exc'),inh:g('--inh'),spk:g('--spk'),soma:g('--soma'),ink:css('--ink'),mute:css('--mute')}}
+theme();
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change',theme);
+
+/* ---------- morphology ---------- */
+const segs=[],tips=[],UP=new T.Vector3(0,1,0);let axMax=0;
+function perturb(d,ang){const v=new T.Vector3(R()-.5,R()-.5,R()-.5).cross(d).normalize();return d.clone().applyAxisAngle(v,ang).normalize()}
+function dend(p,d,depth,dist){
+ const L=13*Math.pow(.74,depth)*(.8+R()*.4),b=p.clone().addScaledVector(d,L);
+ const s={a:p,b,type:'d',c0:dist,c1:dist+L,r:.18+.55*Math.pow(.68,depth),leaves:[]};
+ segs.push(s);
+ if(depth>=4){tips.push(dist+L);s.leaves=[tips.length-1];return s.leaves}
+ const k=R()<.2?3:2;let ids=[];
+ for(let i=0;i<k;i++)ids=ids.concat(dend(b,perturb(d,.45+R()*.4),depth+1,dist+L));
+ s.leaves=ids;return ids}
+function axon(p,d,n,dist,r,len,branch){
+ for(let i=0;i<n;i++){
+  d=perturb(d,.12+R()*.1);const L=len*(.9+R()*.2),b=p.clone().addScaledVector(d,L);
+  segs.push({a:p,b,type:'a',c0:dist,c1:dist+L,r,leaves:[]});
+  dist+=L;p=b;axMax=Math.max(axMax,dist);
+  if(branch&&(i===3||i===6))axon(p,perturb(d,.9),3,dist,r*.6,6,false)}
+ return{p,d,dist}}
+const SOMA_R=4.5;
+for(let i=0;i<7;i++){
+ const th=Math.PI*2*i/7+R()*.5,y=-.15+R(),h=Math.sqrt(1-y*y);
+ const d=new T.Vector3(Math.cos(th)*h,y,Math.sin(th)*h).normalize();
+ dend(d.clone().multiplyScalar(SOMA_R-.5),d,0,0)}
+const end=axon(new T.Vector3(0,-SOMA_R+.5,0),new T.Vector3(0,-1,0),11,0,.5,7.5,true);
+for(let k=0;k<3;k++)axon(end.p,perturb(end.d,.5+R()*.4),3,end.dist,.22,5,false);
+
+/* bounds */
+const bb=new T.Box3();segs.forEach(s=>{bb.expandByPoint(s.a);bb.expandByPoint(s.b)});
+const ctr=bb.getCenter(new T.Vector3()),size=bb.getSize(new T.Vector3());
+
+/* ---------- scene ---------- */
+const gl=$('gl'),stage=$('stage');
+const renderer=new T.WebGLRenderer({canvas:gl,antialias:true,alpha:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio||1,2));
+const scene=new T.Scene(),camera=new T.PerspectiveCamera(38,1,1,1000);
+const pivot=new T.Group(),world=new T.Group();world.position.copy(ctr).negate();
+pivot.add(world);scene.add(pivot);pivot.rotation.x=.12;
+const mesh=new T.InstancedMesh(new T.CylinderGeometry(1,1,1,6,1,true),new T.MeshBasicMaterial(),segs.length);
+{const m=new T.Matrix4(),q=new T.Quaternion();
+ segs.forEach((s,i)=>{const d=s.b.clone().sub(s.a),L=d.length();q.setFromUnitVectors(UP,d.normalize());
+  m.compose(s.a.clone().add(s.b).multiplyScalar(.5),q,new T.Vector3(s.r,L,s.r));
+  mesh.setMatrixAt(i,m);mesh.setColorAt(i,C.dend);s.cm=(s.c0+s.c1)/2})}
+world.add(mesh);
+const soma=new T.Mesh(new T.SphereGeometry(SOMA_R,28,18),new T.MeshBasicMaterial({color:C.soma}));world.add(soma);
+function fit(){const w=stage.clientWidth,h=stage.clientHeight;if(!w||!h)return;
+ renderer.setSize(w,h,false);camera.aspect=w/h;
+ const need=Math.max(size.y,size.x/camera.aspect,size.z/camera.aspect)*1.12;
+ camera.position.z=need/(2*Math.tan(camera.fov*Math.PI/360));camera.updateProjectionMatrix()}
+new ResizeObserver(fit).observe(stage);fit();
+
+/* drag to rotate */
+let drag=false,lx=0,ly=0;
+gl.addEventListener('pointerdown',e=>{drag=true;lx=e.clientX;ly=e.clientY;gl.setPointerCapture(e.pointerId);gl.style.cursor='grabbing'});
+gl.addEventListener('pointermove',e=>{if(!drag)return;pivot.rotation.y+=(e.clientX-lx)*.008;
+ pivot.rotation.x=Math.max(-.8,Math.min(.8,pivot.rotation.x+(e.clientY-ly)*.006));lx=e.clientX;ly=e.clientY});
+['pointerup','pointercancel'].forEach(t=>gl.addEventListener(t,()=>{drag=false;gl.style.cursor='grab'}));
+const spin=matchMedia('(prefers-reduced-motion: reduce)').matches?0:.12;
+
+/* ---------- neuron model (leaky integrate-and-fire) ---------- */
+const WE=1,WI=1.5;
+function pois(l,r){const L=Math.exp(-l);let k=0,p=1;do{k++;p*=r()}while(p>L);return k-1}
+function runSim(nE,nI,rt,ms,r){let V=-70,ref=0,n=0;const le=nE*rt/1e3,li=nI*rt/1e3;
+ for(let t=0;t<ms;t++){if(ref>0){ref--;V=-70;continue}
+  V+=-(V+70)/20+WE*pois(le,r)-WI*pois(li,r);if(V<-85)V=-85;if(V>=-50){n++;V=-70;ref=4}}
+ return n*1000/ms}
+
+/* ---------- ML: 4 -> 12 -> 1 network trained in the browser ---------- */
+const H=12,W1=[],b1=new Array(H).fill(0),W2=[];let b2=0,ready=false;
+{const r=mulberry(5);for(let j=0;j<H;j++){W1.push([0,0,0,0].map(()=>r()-.5));W2.push((r()-.5)*.6)}}
+const feat=(a,b,c)=>[a/80,b/40,c/50,Math.max(0,a-1.5*b)*c/4000];
+function fwd(x){const h=W1.map((w,j)=>Math.tanh(w[0]*x[0]+w[1]*x[1]+w[2]*x[2]+w[3]*x[3]+b1[j]));let o=b2;for(let j=0;j<H;j++)o+=W2[j]*h[j];return{h,o}}
+function train(X,Y,ep,lr){for(let e=0;e<ep;e++)for(let n=0;n<X.length;n++){
+ const i=(Math.random()*X.length)|0,x=X[i],{h,o}=fwd(x),g=o-Y[i];
+ for(let j=0;j<H;j++){const gh=g*W2[j]*(1-h[j]*h[j]);W2[j]-=lr*g*h[j];for(let k=0;k<4;k++)W1[j][k]-=lr*gh*x[k];b1[j]-=lr*gh}
+ b2-=lr*g}}
+const predict=()=>Math.max(0,fwd(feat(P.nE,P.nI,P.rate)).o)*200;
+function trainAll(){
+ try{const r=mulberry(99),mk=n=>{const X=[],Y=[];for(let i=0;i<n;i++){const a=r()*80,b=r()*40,c=1+r()*49;X.push(feat(a,b,c));Y.push(runSim(a,b,c,400,r)/200)}return{X,Y}};
+  const tr=mk(2500),te=mk(300);train(tr.X,tr.Y,80,.03);train(tr.X,tr.Y,40,.01);
+  const mean=te.Y.reduce((a,b)=>a+b,0)/te.Y.length;let sr=0,st=0;
+  te.X.forEach((x,i)=>{sr+=(te.Y[i]-Math.max(0,fwd(x).o))**2;st+=(te.Y[i]-mean)**2});
+  ready=true;$('status').textContent='Trained in your browser on 2,500 simulated runs. Held-out R²: '+(1-sr/st).toFixed(2)+'.'}
+ catch(e){$('status').textContent='Training failed: '+e.message}}
+setTimeout(trainAll,80);
+
+/* ---------- controls ---------- */
+const P={nE:55,nI:8,rate:26};
+[['nE','oE',v=>v],['nI','oI',v=>v],['rate','oR',v=>v+' Hz']].forEach(([id,o,f])=>{
+ const el=$(id),out=$(o),upd=()=>{P[id]=+el.value;out.textContent=f(el.value)};el.addEventListener('input',upd);upd()});
+
+/* ---------- live simulation + signal pulses ---------- */
+let V=-70,ref=0,simT=0,flash=0,spikeT=[],trace=new Array(400).fill(-70),pulses=[];
+const VD=60,VA=110;
+function spawn(k){if(pulses.length<70){const tip=(Math.random()*tips.length)|0;pulses.push({k,tip,c:tips[tip]})}}
+function step(){simT++;let rec;
+ if(ref>0){ref--;V=-70;rec=-70}
+ else{const ne=pois(P.nE*P.rate/1e3,Math.random),ni=pois(P.nI*P.rate/1e3,Math.random);
+  V+=-(V+70)/20+WE*ne-WI*ni;if(V<-85)V=-85;
+  if(ne&&Math.random()<.04)spawn('e');if(ni&&Math.random()<.04)spawn('i');
+  rec=V;
+  if(V>=-50){spikeT.push(simT);pulses.push({k:'s',tip:-1,c:0});flash=1;rec=-10;V=-70;ref=4}}
+ trace.push(rec);trace.shift()}
+$('volley').addEventListener('click',()=>{for(let i=0;i<14;i++)spawn('e');V+=14});
+
+/* ---------- trace canvas ---------- */
+const tc=$('trace'),tx=tc.getContext('2d');
+function drawTrace(){const dpr=devicePixelRatio||1,w=tc.clientWidth,h=tc.clientHeight;
+ if(tc.width!==Math.round(w*dpr)){tc.width=Math.round(w*dpr);tc.height=Math.round(h*dpr)}
+ tx.setTransform(dpr,0,0,dpr,0,0);tx.clearRect(0,0,w,h);
+ const y=v=>h-6-(v+85)/75*(h-12);
+ tx.strokeStyle=C.mute;tx.lineWidth=1;tx.setLineDash([4,4]);tx.beginPath();tx.moveTo(0,y(-50));tx.lineTo(w,y(-50));tx.stroke();tx.setLineDash([]);
+ tx.strokeStyle=C.ink;tx.lineWidth=1.5;tx.lineJoin='round';tx.beginPath();
+ trace.forEach((v,i)=>{const px=i/(trace.length-1)*w;i?tx.lineTo(px,y(v)):tx.moveTo(px,y(v))});tx.stroke()}
+
+/* ---------- frame loop ---------- */
+const g=x=>Math.exp(-x*x),tmp=new T.Color();
+let last=performance.now(),acc=0,fr=0;
+function frame(now){
+ const dt=Math.min(.05,(now-last)/1000);last=now;
+ acc+=dt*1000;let n=0;while(acc>=1&&n<60){step();acc--;n++}if(acc>=1)acc=0;
+ for(const p of pulses)p.k==='s'?p.c+=VA*dt:p.c-=VD*dt;
+ pulses=pulses.filter(p=>p.k==='s'?p.c<axMax+14:p.c>-2);
+ flash*=Math.pow(.02,dt);
+ segs.forEach((s,i)=>{let e=0,nn=0,sp=0;
+  for(const p of pulses){
+   if(p.k==='s'){if(s.type==='a')sp=Math.max(sp,g((s.cm-p.c)/7))}
+   else if(s.type==='d'&&s.leaves.includes(p.tip)){const a=g((s.cm-p.c)/6);p.k==='e'?e=Math.max(e,a):nn=Math.max(nn,a)}}
+  tmp.copy(s.type==='d'?C.dend:C.axon).lerp(C.exc,e).lerp(C.inh,nn).lerp(C.spk,sp);mesh.setColorAt(i,tmp)});
+ mesh.instanceColor.needsUpdate=true;
+ const dep=Math.max(0,Math.min(1,(V+70)/20));
+ soma.material.color.copy(C.soma).lerp(C.exc,dep*.35).lerp(C.spk,flash);soma.scale.setScalar(1+.18*flash);
+ if(!drag)pivot.rotation.y+=dt*spin;
+ renderer.render(scene,camera);drawTrace();
+ if(++fr%6===0){
+  spikeT=spikeT.filter(t=>simT-t<1000);
+  $('meas').textContent=Math.round(spikeT.length/(Math.max(Math.min(simT,1000),1)/1000));
+  if(ready){const pr=predict();$('pred').textContent=Math.round(pr);$('prob').textContent=Math.round((1-Math.exp(-pr*.1))*100)+'%'}}
+ requestAnimationFrame(frame)}
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
